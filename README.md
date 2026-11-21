@@ -1,39 +1,67 @@
 # SPRITEFORGE STUDIO — Backend Mercado Pago
 
-Backend inicial em Next.js para deploy na Vercel. Desenvolvido para o SPRITEFORGE STUDIO.
+Backend Next.js 15 para Vercel, com servidor MCP Streamable HTTP, consulta de assinaturas recorrentes do Mercado Pago e endpoint de webhook.
 
-**Autoria:** Julio Cesar Campos Machado  
+**Desenvolvimento:** Julio Cesar Campos Machado  
 **Empresa:** LIKE LOOK SOLUTIONS  
 **Site:** https://likelook.wixsite.com/solutions
 
-## O que está implementado
+## Estado confirmado em produção
 
-- Servidor MCP HTTP em `/api/mcp`.
-- Ferramenta MCP `spriteforge_check_subscription`.
-- Consulta `GET /preapproval/search? payer_email=...` no Mercado Pago.
-- Considera `authorized` como assinatura autorizada; outros estados não qualificam.
-- Filtro opcional por `MP_PREAPPROVAL_PLAN_ID`.
-- Proteção do endpoint MCP por Bearer secret.
-- Endpoint de webhook com validação HMAC SHA-256 da assinatura `x-signature`.
+Domínio principal: https://spriteforge-mercadopago.vercel.app/
+
+Testes executados no domínio principal em 20/11/2026 (horários retornados pelo servidor em UTC):
+
+| Verificação | Evidência | Resultado |
+|---|---|---|
+| Health | `GET /api/health` respondeu HTTP 200 e JSON `status: online` | PASS |
+| MCP sem Bearer | `GET/POST /api/mcp` sem credencial respondeu HTTP 401 | PASS |
+| MCP initialize autenticado | JSON-RPC `initialize`, protocolo `2025-03-26`, respondeu HTTP 200 em SSE | PASS |
+| Inicialização concluída | `notifications/initialized` respondeu HTTP 202 | PASS |
+| Descoberta de ferramentas | `tools/list` respondeu HTTP 200 e listou `spriteforge_check_subscription` | PASS |
+| Execução da ferramenta | `tools/call` respondeu HTTP 200 com resultado estruturado | PASS |
+| Consulta do e-mail de teste | Resultado `not_found`, sem assinatura correspondente localizada | NOT FOUND (consulta executada) |
+| Webhook sem assinatura | POST sem assinatura válida respondeu HTTP 401 | PASS |
+
+**Limites da evidência:** esses testes comprovam a autenticação Bearer, a inicialização MCP, a descoberta e a execução da ferramenta no domínio principal. Não comprovam que os previews compartilham configuração, que uma assinatura paga existe, que o webhook válido foi processado, nem que o plugin ChatGPT esteja conectado ao MCP.
+
+## Funcionalidades implementadas
+
+- Servidor MCP HTTP em `/api/mcp`, usando `mcp-handler`.
+- Ferramenta `spriteforge_check_subscription`, com entrada obrigatória `email`.
+- Consulta `GET /preapproval/search` do Mercado Pago.
+- Correspondência pelo e-mail do pagador e, opcionalmente, pelo `MP_PREAPPROVAL_PLAN_ID`.
+- Identificação de assinatura com status `authorized`.
+- Proteção do endpoint MCP por `Authorization: Bearer` e `SPRITEFORGE_MCP_SECRET`.
+- Webhook com validação HMAC SHA-256 do cabeçalho `x-signature`.
 - Endpoint de saúde `/api/health`.
 
-## Limitação importante desta versão
+## Limites de autorização e Premium
 
-Esta é a primeira camada de consulta. Ela **não libera acesso Premium**. A ferramenta retorna `identity_verified: false` e `access_granted: false`, mesmo quando encontra assinatura autorizada.
+A consulta MCP é **somente informativa** nesta versão. Ela não concede acesso Premium: `identity_verified` e `access_granted` permanecem `false`.
 
-Isso é intencional: consultar o e-mail no Mercado Pago não prova que a pessoa que está usando o ChatGPT controla aquele endereço. Para produção, a próxima etapa deve implementar código de confirmação por e-mail, persistência segura de sessão/licença (por exemplo, Supabase) e confirmação das cobranças recorrentes/estado da assinatura. O webhook atual valida e registra o recebimento nos logs, mas ainda não persiste eventos em banco.
+Um contrato de assinatura com status `authorized` não prova, isoladamente, que a cobrança mais recente foi paga ou liquidada. A liberação definitiva deve considerar a situação dos pagamentos autorizados, atrasados, rejeitados, cancelados ou estornados, consultada diretamente na API autenticada do Mercado Pago.
 
-Não use a resposta `premium_eligible` como autorização final de acesso nesta versão.
+O e-mail informado à ferramenta também não prova que a pessoa que está usando o ChatGPT controla aquele endereço. É necessário implementar OTP por e-mail, expiração, limite de tentativas, proteção contra abuso e sessão/licença persistente vinculada ao titular.
 
-## Requisitos
+O webhook atual valida a assinatura e registra metadados mínimos nos logs. Ainda não consulta o recurso notificado, não persiste eventos em banco e não implementa idempotência. Portanto, não deve ser usado como gatilho isolado para liberar ou revogar Premium.
 
-- Node.js 20+
-- Conta GitHub privada
-- Projeto Vercel
-- Credenciais do Mercado Pago
-- Token MCP aleatório e longo
+## Variáveis de ambiente
 
-## Executar localmente
+Configure na Vercel, sem inserir os valores no código ou no Git:
+
+| Nome | Uso |
+|---|---|
+| `MP_ACCESS_TOKEN` | Access Token privado do Mercado Pago |
+| `MP_WEBHOOK_SECRET` | Segredo de assinatura dos Webhooks |
+| `SPRITEFORGE_MCP_SECRET` | Bearer secret que protege o endpoint MCP |
+| `MP_PREAPPROVAL_PLAN_ID` | Opcional; restringe a consulta a um plano |
+
+O valor de `SPRITEFORGE_MCP_SECRET` deve ser armazenado sem o prefixo `Bearer `; o cliente autorizado acrescenta esse prefixo no cabeçalho HTTP. Após alterar variáveis, faça novo deploy. Nunca compartilhe esses segredos em conversas, prints, logs ou comandos com eco visível.
+
+## Execução local
+
+Requisitos: Node.js 20+.
 
 ```bash
 npm install
@@ -41,64 +69,55 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Configure valores reais apenas no `.env.local` local (não faça commit) ou em Environment Variables da Vercel. Nunca coloque Access Token ou segredo em código, frontend ou GitHub.
+Preencha `.env.local` apenas localmente. Não faça commit desse arquivo.
 
-Teste:
-- `http://localhost:3000/api/health`
+Endpoints:
+- Health: `http://localhost:3000/api/health`
 - MCP: `http://localhost:3000/api/mcp`
+- Webhook: `http://localhost:3000/api/webhooks/mercadopago`
 
-O endpoint MCP exige:
-`Authorization: Bearer SEU_SPRITEFORGE_MCP_SECRET`
+## Protocolo MCP
 
-## Variáveis de ambiente na Vercel
+Endpoint: `https://spriteforge-mercadopago.vercel.app/api/mcp`
 
-| Nome | Tipo | Uso |
-|---|---|---|
-| `MP_ACCESS_TOKEN` | Secret | Access Token privado do Mercado Pago |
-| `MP_WEBHOOK_SECRET` | Secret | Segredo de assinatura dos Webhooks |
-| `SPRITEFORGE_MCP_SECRET` | Secret | Protege o endpoint MCP |
-| `MP_PREAPPROVAL_PLAN_ID` | Opcional | ID do plano específico do SPRITEFORGE |
+Cabeçalhos usados nos testes:
+```http
+Authorization: Bearer <SPRITEFORGE_MCP_SECRET>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+MCP-Protocol-Version: 2025-03-26
+```
 
-Após cadastrar/alterar variáveis, faça novo deploy.
+Ferramenta:
+```json
+{
+  "name": "spriteforge_check_subscription",
+  "arguments": {
+    "email": "cliente@exemplo.com"
+  }
+}
+```
+
+O segredo Bearer é uma credencial de integração servidor-servidor. Não o coloque no plugin distribuído, no navegador ou em instruções acessíveis ao usuário final. A sessão autenticada do ChatGPT não fornece automaticamente o e-mail do usuário ao backend. Antes de conectar o plugin, confirme que o mecanismo de autenticação configurado no host consegue fornecer credenciais ao endpoint sem expor um segredo compartilhado.
 
 ## Webhook Mercado Pago
 
-Depois do deploy, cadastre no painel do Mercado Pago:
+Cadastre no painel do Mercado Pago:
+`https://spriteforge-mercadopago.vercel.app/api/webhooks/mercadopago`
 
-`https://SEU-DOMINIO.vercel.app/api/webhooks/mercadopago`
+Eventos relevantes incluem `subscription_preapproval` e `subscription_authorized_payment`. A notificação é um aviso; consulte a API autenticada para obter o estado definitivo do recurso. Antes de automatizar qualquer decisão, implemente persistência, idempotência, reconciliação e trilha de auditoria.
 
-Ative eventos relacionados a:
-- `subscription_preapproval`
-- `subscription_authorized_payment`
+## Próximas etapas obrigatórias
 
-Copie o segredo de assinatura de Webhooks para `MP_WEBHOOK_SECRET` na Vercel. Não confunda esse segredo com o Access Token.
-
-O endpoint valida o HMAC conforme a documentação do Mercado Pago. Não confie apenas no conteúdo do POST: a notificação serve para avisar que houve alteração; a API autenticada do Mercado Pago é a fonte de verdade.
-
-## Ferramenta MCP
-
-Nome: `spriteforge_check_subscription`
-
-Entrada:
-```json
-{ "email": "cliente@exemplo.com" }
-```
-
-O servidor exige cabeçalho HTTP:
-```http
-Authorization: Bearer SEU_SPRITEFORGE_MCP_SECRET
-```
-
-## Antes de produção
-
-- [ ] Configurar os quatro valores de ambiente na Vercel.
-- [ ] Fazer deploy e testar `/api/health`.
-- [ ] Testar consulta com conta/assinatura de teste do Mercado Pago.
-- [ ] Confirmar o plano correto via `MP_PREAPPROVAL_PLAN_ID`.
-- [ ] Implementar confirmação de e-mail e armazenamento persistente.
-- [ ] Validar cobranças recorrentes e política de inadimplência.
-- [ ] Conectar o endpoint MCP ao cliente ChatGPT com autenticação suportada.
-- [ ] Não liberar Premium até concluir os itens de segurança.
+- [ ] Criar ou identificar uma assinatura recorrente de teste no Mercado Pago.
+- [ ] Confirmar o e-mail do pagador e o ID do plano; distinguir conta do vendedor de pagador.
+- [ ] Validar cobrança recorrente e política para pagamentos pendentes, rejeitados, atrasados e cancelados.
+- [ ] Implementar OTP por e-mail com expiração, limite de tentativas e proteção contra enumeração.
+- [ ] Persistir usuários, verificações, licenças, eventos e estado de pagamento em banco.
+- [ ] Implementar webhook com consulta do recurso, idempotência e reconciliação.
+- [ ] Definir autenticação compatível com o conector ChatGPT; não distribuir o Bearer secret.
+- [ ] Testar autorização, revogação e expiração de ponta a ponta.
+- [ ] Só então habilitar a concessão de recursos Premium.
 
 ## Referências oficiais
 
