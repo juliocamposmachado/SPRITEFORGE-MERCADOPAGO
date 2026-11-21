@@ -33,8 +33,8 @@ export async function searchSubscriptionsByEmail(email: string) {
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Mercado Pago retornou HTTP ${response.status}: ${detail.slice(0, 300)}`);
+    // Não propaga o corpo bruto da API para a resposta MCP.
+    throw new Error(`Mercado Pago retornou HTTP ${response.status} durante a busca de assinaturas.`);
   }
 
   const payload = await response.json() as {
@@ -55,8 +55,8 @@ export async function checkSubscription(emailInput: string) {
     return sameEmail && samePlan;
   });
 
-  // Para assinatura recorrente, "authorized" indica contrato autorizado.
-  // Estados pending, paused, cancelled e outros não liberam Premium.
+  // "authorized" indica contrato de assinatura autorizado, não comprova
+  // que a cobrança mais recente foi liquidada ou que a identidade foi verificada.
   const active = matching
     .filter((item) => item.status === "authorized")
     .sort((a, b) => {
@@ -70,16 +70,21 @@ export async function checkSubscription(emailInput: string) {
   return {
     found: matching.length > 0,
     subscription_active: Boolean(subscription),
-    premium_eligible: Boolean(subscription),
+    subscription_contract_authorized: Boolean(subscription),
+    // Mantido false até existir validação de pagamento + OTP + licença persistida.
+    premium_eligible: false,
     status: subscription?.status ?? matching[0]?.status ?? "not_found",
     subscription_id: subscription?.id ?? null,
     next_payment_date: subscription?.next_payment_date ?? null,
     plan_id: subscription?.preapproval_plan_id ?? null,
-    // O retorno do MP não comprova que a pessoa no ChatGPT controla o e-mail.
+    search_results_count: results.length,
+    matching_subscriptions_count: matching.length,
+    authorized_subscriptions_count: active.length,
+    plan_filter_enabled: Boolean(configuredPlanId),
     identity_verified: false,
     access_granted: false,
     message: subscription
-      ? "Assinatura autorizada localizada. É necessário concluir a verificação de identidade antes de liberar recursos Premium."
-      : "Nenhuma assinatura autorizada correspondente foi localizada."
+      ? "Contrato de assinatura autorizado localizado. A cobrança vigente e a identidade ainda precisam ser verificadas; nenhum acesso Premium foi concedido."
+      : "Nenhuma assinatura correspondente ao e-mail e ao filtro de plano foi localizada. Confira o e-mail do pagador, o tipo de pagamento e o ID do plano."
   };
 }
