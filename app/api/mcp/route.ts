@@ -11,7 +11,7 @@ const mcpHandler = createMcpHandler((server) => {
     {
       title: "Verificar assinatura SPRITEFORGE",
       description:
-        "Consulta no Mercado Pago se existe assinatura autorizada do SPRITEFORGE STUDIO para o e-mail informado. Não libera Premium por si só: a identidade do titular ainda precisa ser verificada.",
+        "Consulta no Mercado Pago se existe assinatura recorrente autorizada do SPRITEFORGE STUDIO para o e-mail informado. Retorna dados de diagnóstico da busca. Não comprova a quitação da cobrança mais recente, não verifica a identidade do usuário e nunca concede acesso Premium.",
       inputSchema: z.object({
         email: z.string().email().max(254)
       })
@@ -34,7 +34,7 @@ const mcpHandler = createMcpHandler((server) => {
 }, {
   serverInfo: {
     name: "spriteforge-mercadopago",
-    version: "1.0.0"
+    version: "1.0.1"
   }
 });
 
@@ -47,7 +47,6 @@ function isAuthorized(request: Request) {
     ? authorization.slice(7).trim()
     : "";
 
-  // Comparação em tempo constante para evitar comparação ingênua de segredos.
   if (supplied.length !== expected.length) return false;
   let mismatch = 0;
   for (let i = 0; i < supplied.length; i++) {
